@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>도장 커스텀 시뮬레이터 PRO</title>
+    <style>
+        body { font-family: 'Apple SD Gothic Neo', sans-serif; text-align: center; background: #f5f5f5; padding: 20px; margin: 0; }
+        .box { background: white; padding: 30px; border-radius: 20px; display: inline-block; box-shadow: 0 10px 30px rgba(0,0,0,0.1); position: relative; }
+        
+        /* 설정창 레이아웃 */
+        .controls { display: flex; flex-direction: column; gap: 15px; max-width: 600px; margin: 0 auto 20px auto; text-align: left; }
+        .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        label { font-size: 12px; color: #888; margin-bottom: 4px; display: block; font-weight: bold; }
+        input, select, button { padding: 12px; border: 1px solid #ddd; border-radius: 8px; width: 100%; box-sizing: border-box; font-size: 14px; }
+        button { background: #222; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; border: none; }
+        button:hover { background: #444; }
+
+        /* 캔버스 및 비디오 영역 */
+        .canvas-wrapper { position: relative; display: inline-block; line-height: 0; }
+        canvas { border: 1px solid #eee; max-width: 100%; height: auto; border-radius: 10px; background: #fafafa; }
+
+        /* [동영상 설정] 영상이 표시되는 박스의 스타일 */
+        #videoContainer {
+            position: absolute;
+            overflow: hidden;
+            background: #000;
+            z-index: 10;
+            pointer-events: none; /* 영상이 마우스 클릭을 방해하지 않음 */
+        }
+        .video-player {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            object-fit: cover;
+            transition: opacity 0.6s ease-in-out; /* 돌 변경 시 페이드 효과 */
+        }
+        .info-text { font-size: 11px; color: #e74c3c; margin-top: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="box">
+    <h2 style="margin-top:0;">도장 커스텀 시뮬레이터 PRO</h2>
+    
+    <div class="controls">
+        <div class="row">
+            <div>
+                <label id="inputLabel">이름 입력</label>
+                <input type="text" id="nameInput" value="STAMP" oninput="draw()">
+                <div id="limitInfo" class="info-text"></div>
+            </div>
+            <div>
+                <label>폰트 선택 (FONT STYLE)</label>
+                <select id="fontSelect" onchange="draw()"></select>
+            </div>
+        </div>
+
+        <div class="row">
+            <div>
+                <label>돌 종류 (영상 자동 전환)</label>
+                <select id="stoneSelect" onchange="changeStone()">
+                    <option value="stone1">요녕석 (Stone 1)</option>
+                    <option value="stone2">홍석 (Stone 2)</option>
+                    <option value="stone3">청석 (Stone 3)</option>
+                    <option value="stone4">흑석 (Stone 4)</option>
+                </select>
+            </div>
+            <div>
+                <label>각인 위치 (POSITION)</label>
+                <select id="posSelect" onchange="updateUI()">
+                    <option value="P1">위치 1 (우측 하단 - 세로)</option>
+                    <option value="P2">위치 2 (중앙 하단 - 가로)</option>
+                    <option value="P3" selected>위치 3 (우측 상단 - 영문 회전)</option>
+                </select>
+            </div>
+        </div>
+        <button onclick="draw()">설정 즉시 적용</button>
+    </div>
+
+    <div class="canvas-wrapper">
+        <canvas id="canvas" width="768" height="1024"></canvas>
+        
+        <div id="videoContainer">
+            <video id="video-1" class="video-player" autoplay loop muted playsinline style="opacity: 1;"></video>
+            <video id="video-2" class="video-player" autoplay loop muted playsinline style="opacity: 0;"></video>
+        </div>
+    </div>
+</div>
+
+<script>
+    /* =========================================
+       1. [영상/디자인 설정] 작업 시 여기서 수정하세요
+       ========================================= 
+    */
+    const videoConfig = {
+        top: "35px",           // 상단 여백
+        right: "35px",         // 우측 여백
+        width: "230px",        // 가로 크기
+        height: "160px",       // 세로 크기
+        borderRadius: "12px",  // 모서리 곡률
+        borderWidth: "4px",    // 테두리 두께
+        borderColor: "#ffffff",// 테두리 색상
+        boxShadow: "0 10px 25px rgba(0,0,0,0.2)"
+    };
+
+    /* =========================================
+       2. [폰트 리스트] 10개 설정
+       ========================================= 
+    */
+    const FONT_LIST = {
+        'F1': { file: 'font1.woff', name: '나눔 명조체' },
+        'F2': { file: 'font2.woff', name: '본 고딕체' },
+        'F3': { file: 'font3.woff', name: '궁서체' },
+        'F4': { file: 'font4.woff', name: '바탕체' },
+        'F5': { file: 'font5.woff', name: '손글씨체' },
+        'F6': { file: 'font6.woff', name: '기본 산세리프' },
+        'F7': { file: 'font7.woff', name: '빈티지 서체' },
+        'F8': { file: 'font8.woff', name: '모던 스타일' },
+        'F9': { file: 'font9.woff', name: '굵은 헤드라인' },
+        'F10': { file: 'font10.woff', name: '클래식 서체' }
+    };
+
+    /* =========================================
+       3. [파일 매칭] 돌 이미지 & 영상 경로
+       ========================================= 
+    */
+    const STONE_FILES = { 
+        "stone1": "stone1.jpg", "stone2": "stone2.jpg", 
+        "stone3": "stone3.jpg", "stone4": "stone4.jpg" 
+    };
+
+    const VIDEO_MAP = {
+        "stone1": "stone1_process.mp4",
+        "stone2": "stone2_process.mp4",
+        "stone3": "stone3_process.mp4",
+        "stone4": "stone4_process.mp4"
+    };
+
+    /* =========================================
+       4. [상세 좌표 설정] Stone 1~4 / P1~P3 완벽 구성
+       ========================================= 
+    */
+    const STAMP_SETTINGS = {
+        // --- Stone 1 (요녕석) ---
+        "stone1_P1": { len2: { x: 680, y: 850, size: 75, space: 15 }, len3: { x: 680, y: 780, size: 70, space: 12 } },
+        "stone1_P2": { len2: { x: 384, y: 850, size: 75, space: 20 }, len3: { x: 384, y: 850, size: 70, space: 15 } },
+        "stone1_P3": { x: 680, y: 150, size: 50, space: 8 },
+
+        // --- Stone 2 (홍석) ---
+        "stone2_P1": { len2: { x: 650, y: 830, size: 60, space: 10 }, len3: { x: 650, y: 760, size: 55, space: 8 } },
+        "stone2_P2": { len2: { x: 384, y: 830, size: 60, space: 15 }, len3: { x: 384, y: 830, size: 55, space: 10 } },
+        "stone2_P3": { x: 650, y: 130, size: 45, space: 6 },
+
+        // --- Stone 3 (청석) ---
+        "stone3_P1": { len2: { x: 670, y: 840, size: 70, space: 12 }, len3: { x: 670, y: 770, size: 65, space: 10 } },
+        "stone3_P2": { len2: { x: 384, y: 840, size: 70, space: 18 }, len3: { x: 384, y: 840, size: 65, space: 12 } },
+        "stone3_P3": { x: 670, y: 140, size: 50, space: 8 },
+
+        // --- Stone 4 (흑석) ---
+        "stone4_P1": { len2: { x: 690, y: 860, size: 85, space: 20 }, len3: { x: 690, y: 790, size: 80, space: 15 } },
+        "stone4_P2": { len2: { x: 384, y: 860, size: 85, space: 25 }, len3: { x: 384, y: 860, size: 80, space: 20 } },
+        "stone4_P3": { x: 690, y: 160, size: 55, space: 10 }
+    };
+
+    /* =========================================
+       5. 실행 로직 (기능 통합 제어)
+       ========================================= 
+    */
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const img = new Image();
+    const container = document.getElementById('videoContainer');
+    const v1 = document.getElementById('video-1');
+    const v2 = document.getElementById('video-2');
+    
+    let currentVideo = v1;
+    let nextVideo = v2;
+
+    // 영상 레이아웃 초기화
+    function initVideoLayout() {
+        container.style.top = videoConfig.top;
+        container.style.right = videoConfig.right;
+        container.style.width = videoConfig.width;
+        container.style.height = videoConfig.height;
+        container.style.borderRadius = videoConfig.borderRadius;
+        container.style.border = `${videoConfig.borderWidth} solid ${videoConfig.borderColor}`;
+        container.style.boxShadow = videoConfig.boxShadow;
+    }
+
+    // 돌 변경 시 부드러운 전환 (Seamless Cross-fade)
+    function changeStone() {
+        const stoneValue = document.getElementById('stoneSelect').value;
+        img.src = STONE_FILES[stoneValue];
+
+        const newPath = VIDEO_MAP[stoneValue];
+        if (currentVideo.getAttribute('src') !== newPath) {
+            nextVideo.src = newPath;
+            nextVideo.load();
+            nextVideo.oncanplaythrough = () => {
+                nextVideo.style.opacity = 1;
+                currentVideo.style.opacity = 0;
+                nextVideo.play();
+                const temp = currentVideo;
+                currentVideo = nextVideo;
+                nextVideo = temp;
+                nextVideo.oncanplaythrough = null;
+            };
+        }
+    }
+
+    // UI 상태 업데이트
+    function updateUI() {
+        const posKey = document.getElementById('posSelect').value;
+        const nameInput = document.getElementById('nameInput');
+        if (posKey === 'P3') {
+            document.getElementById('inputLabel').innerText = "영문 이름 입력 (90도 회전)";
+            nameInput.removeAttribute('maxlength');
+            document.getElementById('limitInfo').innerText = "";
+        } else {
+            document.getElementById('inputLabel').innerText = "한글 이름 입력 (최대 3자)";
+            nameInput.setAttribute('maxlength', '3');
+            document.getElementById('limitInfo').innerText = "* 3자까지만 입력 가능";
+        }
+        draw();
+    }
+
+    // 캔버스 그리기 (텍스트 렌더링 포함)
+    function draw() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#fafafa";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        if (img.complete && img.naturalWidth !== 0) {
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        }
+
+        const name = document.getElementById('nameInput').value || "";
+        const posKey = document.getElementById('posSelect').value;
+        const fontKey = document.getElementById('fontSelect').value;
+        const stoneKey = document.getElementById('stoneSelect').value;
+        
+        const configKey = `${stoneKey}_${posKey}`;
+        const rawCfg = STAMP_SETTINGS[configKey] || STAMP_SETTINGS["stone1_P1"];
+        
+        // 글자 수에 따른 분기 (P3는 단일 설정 사용)
+        let cfg = (posKey === 'P3') ? rawCfg : ((name.length <= 2) ? rawCfg.len2 : rawCfg.len3);
+
+        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.shadowColor = "rgba(0,0,0,0.3)";
+        ctx.shadowBlur = 2;
+        ctx.font = `600 ${cfg.size}px ${fontKey}, sans-serif`;
+
+        const letters = name.split('');
+        
+        if (posKey === 'P2') {
+            // 위치 2: 가로 쓰기 (수치 기반 간격 적용)
+            const totalWidth = (letters.length - 1) * (cfg.size + cfg.space);
+            let startX = cfg.x - (totalWidth / 2);
+            letters.forEach((char) => {
+                ctx.fillText(char, startX, cfg.y);
+                startX += cfg.size + cfg.space;
+            });
+        } else {
+            // 위치 1, 3: 세로 쓰기 (회전 기능 포함)
+            let currentY = cfg.y;
+            letters.forEach((char) => {
+                ctx.save();
+                if (posKey === 'P3') {
+                    ctx.translate(cfg.x, currentY);
+                    ctx.rotate(Math.PI / 2);
+                    ctx.fillText(char, 0, 0);
+                } else {
+                    ctx.fillText(char, cfg.x, currentY);
+                }
+                ctx.restore();
+                currentY += cfg.size + cfg.space;
+            });
+        }
+        ctx.shadowColor = "transparent";
+    }
+
+    // 초기 실행 및 리스너 등록
+    Object.keys(FONT_LIST).forEach(key => {
+        const font = FONT_LIST[key];
+        const fontFace = new FontFace(key, `url(${font.file}) format('woff')`);
+        fontFace.load().then(f => {
+            document.fonts.add(f);
+            draw(); 
+        });
+        document.getElementById('fontSelect').innerHTML += `<option value="${key}">${font.name}</option>`;
+    });
+
+    initVideoLayout();
+    v1.src = VIDEO_MAP["stone1"];
+    img.src = STONE_FILES["stone1"];
+    img.onload = draw;
+    window.onload = updateUI;
+</script>
+</body>
+</html>
